@@ -1,0 +1,1 @@
+Phase 35.1: Manage Content improvements. Skins grouped into collapsible character sections with name sorting and search. Locations have North/Central/South/Other region selection. Existing locations without a region display as Other until saved. All Phase 35 features retained.

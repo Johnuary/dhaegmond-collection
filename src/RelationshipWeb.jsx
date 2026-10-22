@@ -1,0 +1,46 @@
+import { useMemo, useRef, useState } from "react";
+import { byId, image } from "./data";
+
+const keyFor = (a,b) => [a,b].sort().join("::");
+const statuses = ["Unspecified","Established","Developing","Strained","Broken","Reconciled"];
+const statusColors={Unspecified:"#8dcab6",Established:"#8dcab6",Developing:"#86bae1",Strained:"#e5ab69",Broken:"#db7777",Reconciled:"#c5a5e5"};
+const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
+const fallback=(chars,focus)=>chars.map((c,i)=>{const isFocus=focus===c.id;const n=focus?chars.length-1:chars.length;const j=focus?chars.filter(x=>x.id!==focus).findIndex(x=>x.id===c.id):i;const theta=-Math.PI/2+(j/Math.max(1,n))*Math.PI*2;return {...c,x:isFocus?500:500+Math.cos(theta)*Math.min(380,Math.max(175,n*26)),y:isFocus?295:295+Math.sin(theta)*Math.min(215,Math.max(140,n*18))};});
+export default function RelationshipWeb({db,onSave,onOpenCharacter,onBack}){
+ const chars=db.characters||[];
+ const arcs=[{id:"default",name:"General / All-time"},...(db.timelines||[]).map(t=>({id:t.id,name:t.name}))];
+ const [arc,setArc]=useState("default"),[focus,setFocus]=useState(""),[search,setSearch]=useState(""),[depth,setDepth]=useState("All"),[mode,setMode]=useState(false),[showLabels,setShowLabels]=useState(true),[selectedEdge,setSelectedEdge]=useState(""),[statusFilter,setStatusFilter]=useState("All");
+ const svgRef=useRef(null),drag=useRef(null);
+ const config=db.relationshipWeb||{};
+ const positions=config.layouts?.[arc]||{};
+ const arcStatuses=config.statuses?.[arc]||{};
+ const edges=useMemo(()=>{const m=new Map();for(const c of chars)for(const r of c.relationships||[]){if(c.id===r.characterId||!byId(chars,r.characterId))continue;const key=keyFor(c.id,r.characterId);const e=m.get(key)||{key,a:c.id,b:r.characterId,forward:"",backward:""};if(c.id===e.a)e.forward=r.type||"Connected";else e.backward=r.type||"Connected";m.set(key,e);}return [...m.values()];},[chars]);
+ const query=search.toLowerCase().trim();
+ const relevant=chars.filter(c=>`${c.name} ${c.title||""}`.toLowerCase().includes(query));
+ const allowed=useMemo(()=>{if(!focus)return new Set(relevant.map(c=>c.id));const result=new Set([focus]);let frontier=new Set([focus]);const iterations=depth==="All"?chars.length:Number(depth);for(let i=0;i<iterations;i++){const next=new Set();for(const e of edges){if(frontier.has(e.a))next.add(e.b);if(frontier.has(e.b))next.add(e.a);}frontier=new Set([...next].filter(id=>!result.has(id)));frontier.forEach(id=>result.add(id));if(!frontier.size)break;}return result;},[focus,depth,edges,chars,search]);
+ const nodes=chars.filter(c=>allowed.has(c.id));
+ const base=fallback(nodes,focus);
+ const plotted=base.map(c=>({...c,x:positions[c.id]?.x??c.x,y:positions[c.id]?.y??c.y}));
+ const coords=new Map(plotted.map(c=>[c.id,c]));
+ const visibleEdges=edges.filter(e=>coords.has(e.a)&&coords.has(e.b)&&(statusFilter==="All"||(arcStatuses[e.key]||"Unspecified")===statusFilter));
+ const chosen=edges.find(e=>e.key===selectedEdge);
+ const selectedStatus=chosen?(arcStatuses[chosen.key]||"Unspecified"):"Unspecified";
+ function updateWeb(patch){onSave({...db,relationshipWeb:{...config,...patch}});}
+ function updatePosition(id,pos){updateWeb({layouts:{...(config.layouts||{}),[arc]:{...positions,[id]:pos}}});}
+ function updateStatus(key,status){updateWeb({statuses:{...(config.statuses||{}),[arc]:{...arcStatuses,[key]:status}}});}
+ function updateLabel(a,b,value){const next=db.characters.map(c=>c.id!==a?c:{...c,relationships:(c.relationships||[]).map(r=>r.characterId===b?{...r,type:value}:r)});onSave({...db,characters:next});}
+ function coordsFromEvent(e){const svg=svgRef.current;const rect=svg.getBoundingClientRect();return {x:clamp((e.clientX-rect.left)/rect.width*1000,40,960),y:clamp((e.clientY-rect.top)/rect.height*590,45,545)};}
+ function startDrag(e,id){if(!mode)return;e.preventDefault();e.currentTarget.setPointerCapture(e.pointerId);drag.current=id;updatePosition(id,coordsFromEvent(e));}
+ function moveDrag(e){if(!drag.current)return;updatePosition(drag.current,coordsFromEvent(e));}
+ function stopDrag(){drag.current=null;}
+ function resetPositions(){const next={...(config.layouts||{})};delete next[arc];updateWeb({layouts:next});}
+ return <main className="shell"><header className="topbar"><span className="brand">DHÆG-MOND <small>RELATIONSHIP WEB</small></span><button className="outline-button" onClick={onBack}>← Collection</button></header><section className="relationship-web-page"><p className="eyebrow">THE CELESTIAL ARCHIVE</p><h1>Relationship Web</h1><p className="muted">Arrange character networks differently for each timeline. Relationship descriptions stay attached to the characters; layout and status are stored per arc.</p>
+ <div className="web-toolbar"><label>Story arc<select value={arc} onChange={e=>{setArc(e.target.value);setSelectedEdge("");}}>{arcs.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></label><label>Search<input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Character name"/></label><label>Focus<select value={focus} onChange={e=>setFocus(e.target.value)}><option value="">Entire roster</option>{chars.map(c=><option value={c.id} key={c.id}>{c.name}</option>)}</select></label><label>Connections<select value={depth} disabled={!focus} onChange={e=>setDepth(e.target.value)}><option value="1">Direct</option><option value="2">Two degrees</option><option value="All">All</option></select></label><label>Status<select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option>All</option>{statuses.map(s=><option key={s}>{s}</option>)}</select></label></div>
+ <div className="web-edit-bar"><label><input type="checkbox" checked={mode} onChange={e=>setMode(e.target.checked)}/> Edit positions (drag portraits)</label><label><input type="checkbox" checked={showLabels} onChange={e=>setShowLabels(e.target.checked)}/> Show labels</label><button className="outline-button" onClick={resetPositions}>Reset this arc's layout</button></div>
+ <div className="web-canvas"><svg ref={svgRef} viewBox="0 0 1000 590" role="group" aria-label="Relationship network" onPointerMove={moveDrag} onPointerUp={stopDrag} onPointerCancel={stopDrag}><defs><pattern id="p30dots" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#537185" opacity=".3"/></pattern></defs><rect width="1000" height="590" fill="url(#p30dots)"/>
+ {visibleEdges.map(e=>{const a=coords.get(e.a),b=coords.get(e.b),status=arcStatuses[e.key]||"Unspecified",col=statusColors[status],label=[e.forward,e.backward].filter(Boolean).filter((x,i,arr)=>arr.indexOf(x)===i).join(" / ")||"Connected";return <g key={e.key} onClick={()=>setSelectedEdge(e.key)} className="web-edge"><line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth="20"/><line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={col} strokeWidth={selectedEdge===e.key?5:2.6} opacity=".9" pointerEvents="none"/>{showLabels&&<text x={(a.x+b.x)/2} y={(a.y+b.y)/2-9} fill="#f0e7d8" fontSize="12" textAnchor="middle" paintOrder="stroke" stroke="#071321" strokeWidth="5" pointerEvents="none">{label.slice(0,25)}</text>}<title>{`${a.name} and ${b.name}: ${label} (${status})`}</title></g>})}
+ {plotted.map(n=><g key={n.id} className="web-node" onPointerDown={e=>startDrag(e,n.id)} onClick={()=>{if(!mode)setFocus(n.id)}} style={{cursor:mode?"grab":"pointer",touchAction:"none"}}><circle cx={n.x} cy={n.y} r="30" fill="#142b3c" stroke={focus===n.id?"#f2d39b":"#91bec6"} strokeWidth="3"/><text x={n.x} y={n.y+6} fill="#dac38e" textAnchor="middle" fontSize="23" pointerEvents="none">✦</text><text x={n.x} y={n.y+49} fontSize="15" fontWeight="600" fill="#f0e7d8" textAnchor="middle" paintOrder="stroke" stroke="#071321" strokeWidth="4" pointerEvents="none">{n.name}</text></g>)}
+ </svg></div>
+ <div className="web-bottom"><section><h2>{focus?byId(chars,focus)?.name:"Network Controls"}</h2><p className="muted">{plotted.length} characters · {visibleEdges.length} connections</p>{focus&&<button className="primary-button" onClick={()=>onOpenCharacter(focus,"Relationships")}>Open Character Profile →</button>}<p className="muted">Select a line to edit its arc status and directional descriptions. Drag characters in Edit Positions mode. Changes save to your collection automatically.</p></section><section className="web-relations"><h3>Relationship details</h3>{chosen?<div className="web-edge-editor"><strong>{byId(chars,chosen.a)?.name} ↔ {byId(chars,chosen.b)?.name}</strong><label>Relationship status in this arc<select value={selectedStatus} onChange={e=>updateStatus(chosen.key,e.target.value)}>{statuses.map(s=><option key={s}>{s}</option>)}</select></label><label>{byId(chars,chosen.a)?.name}'s description<input value={chosen.forward} onChange={e=>updateLabel(chosen.a,chosen.b,e.target.value)} placeholder="Friend, rival, sibling..."/></label><label>{byId(chars,chosen.b)?.name}'s description<input value={chosen.backward} onChange={e=>updateLabel(chosen.b,chosen.a,e.target.value)} placeholder="Friend, rival, sibling..."/></label><small className="muted">Directional descriptions are global character data. Status belongs only to the selected story arc.</small></div>:<p className="muted">Click a connection line to inspect or edit it.</p>}</section></div>
+ </section></main>;
+}
